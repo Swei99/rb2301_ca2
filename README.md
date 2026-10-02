@@ -5,7 +5,7 @@ In this assignment your robot must drive through a known maze, visiting a list o
 1. **Plan** a collision-free path on the occupancy grid (e.g. with A\*, Dijkstra or BFS).
 2. **Track** that path with the robot using waypoints and PID control.
 
-You develop everything in the Gazebo simulation first.
+You develop everything in the Gazebo simulation first. The real-robot part is described at the end of this file.
 
 ---
 
@@ -156,12 +156,93 @@ Stop either with `Ctrl+C`. Stopping the simulation with `Ctrl+C` also cleans up 
 
 ---
 
+## Real robot (branch `irl-final-maze`, being tested)
+
+Same `path_planning.py`, same code: the only differences are the pose source (Optitrack instead of Gazebo odometry), the map and the goals. Your code does not change between simulation and the real maze, because the pose is converted into the maze's own frame **before** your code sees it (`self.origin` is `(0, 0)`, `self.resolution` is `0.2` as in simulation, `world_to_grid()` / `grid_to_world()` work the same).
+
+### The real maze
+
+A fixed 3.2 m x 3.2 m maze, built at the **same 0.2 m grid** as the simulation (`ca2_irl_map.npy`, 16 x 16, `0` = free, `99` = wall). Coordinates are in metres, with `(0, 0)` at the outer corner of array cell `[0, 0]`, `+x` along array axis 0 and `+y` along axis 1. There are three runs, picked with `--run`:
+
+| `--run` | Run | Robot starts at (x, y) | Goals, in order |
+|---|---|---|---|
+| `test1` | Test run 1 | (0.5, 0.5) | (2.9, 1.1) -> (1.7, 0.5) -> (2.3, 0.5) -> (1.7, 1.1) |
+| `test2` | Test run 2 | (2.7, 2.7) | (0.5, 1.1) -> (1.7, 2.3) -> (0.5, 2.9) -> (1.1, 2.9) |
+| `full` | Full run | (0.5, 2.1) | (1.1, 0.5) -> (2.3, 2.9) -> (2.9, 0.5) -> (0.5, 1.7) |
+
+Place the robot on its start point before launching. (The first pose is checked against the run's start and you get a warning if it is more than 0.4 m away.) The robot's speed is capped at 0.3 m/s.
+
+### 1. One-time setup per maze placement: `optitrack_variables.config`
+
+This is the **only** thing to edit when the maze is moved. It tells the code where the maze sits in Optitrack's frame (`src/rb2301_ca2/rb2301_ca2/optitrack_variables.config`):
+
+```ini
+[frame]
+origin_x = 0.0        ; Optitrack (x, y) in metres of the maze's (0, 0) corner
+origin_y = 0.0
+rotation_deg = 0.0    ; angle of the maze's +x axis in Optitrack's frame, counter-clockwise positive
+
+[robot]
+number = 3            ; your Bingda robot: 3 -> /vrpn_mocap/bingda_003/pose  (or pass --robot N)
+```
+
+### 2. Calibrate
+
+Don't work these out by hand:
+
+1. On the robot, start Optitrack (below), then run `./ca2.sh --run test1 --calibrate`. It prints the raw Optitrack pose and the maze-frame pose twice a second and **never sends a velocity command**, so you can push the robot around by hand.
+2. Put the robot (or any rigid body Optitrack tracks) on two or more known maze points, far apart (for example the start point of `test1` and a point near the opposite corner of the maze), and note the Optitrack `(x, y)` shown at each.
+3. On any computer (no ROS needed):
+   ```bash
+   python3 tools/irl_calibrate.py --pair 0.5 0.5 <opti_x> <opti_y> --pair 2.9 2.9 <opti_x> <opti_y>
+   ```
+   Each `--pair` is `maze_x maze_y optitrack_x optitrack_y`. It prints the three numbers to paste into the config and a fit residual (it should be a centimetre or two; it warns above 5 cm).
+4. Copy the config to the robot (step 3 below), run `--calibrate` again and check the **maze** pose matches where you really put the robot. Also turn the robot to face the maze's `+x` direction: the maze heading should read about `0`.
+
+Motive must stream with **Z-up** so that `x, y` are the floor plane (it is, for the existing set-up).
+
+### 3. Run it on the robot
+
+The robot runs Ubuntu 20.04 with ROS 2 **Foxy** (Python 3.8). Your laptop only has to copy files to it:
+
+```bash
+# on your laptop, from this repository (use your own folder name; --delete only touches that one package folder)
+ssh bingda@192.168.1.20x "mkdir -p ~/Downloads/rb2301_ca2_<YourName>/src"
+rsync -auvx --delete src/rb2301_ca2 bingda@192.168.1.20x:~/Downloads/rb2301_ca2_<YourName>/src
+
+# on the robot (ssh in), once and after every rsync that adds/removes files
+cd ~/Downloads/rb2301_ca2_<YourName> && colcon build --symlink-install
+```
+
+(`x` is your robot's number. Re-run the `rsync` after editing `path_planning.py` or the config on your laptop.) Then, in **separate terminals on the robot**:
+
+```bash
+ros2 launch base_control_ros2 base_control.launch.py     # alias: basecontrol   -- reads /cmd_vel, drives the wheels
+ros2 launch vrpn_mocap client.launch.yaml server:=192.168.1.199 port:=3883   # alias: vrpn   -- publishes Optitrack poses
+cd ~/Downloads/rb2301_ca2_<YourName> && ./ca2.sh --run test1       # or test2 / full; add --robot N if it isn't robot 3
+```
+
+The `base_control_ros2` / `vrpn` / WiFi details are in the lab handout. Check that `ros2 topic list` shows `/vrpn_mocap/bingda_00x/pose` before starting. Keep a hand near the robot and `Ctrl+C` the `ca2.sh` terminal if it misbehaves.
+
+### Troubleshooting (real robot)
+
+- **No pose / nothing prints:** the node only starts working once it receives a pose. Is `vrpn` running, and does the rigid body in Motive have the same name as the topic (`bingda_00x`)? Is the robot's `ROS_DOMAIN_ID` set to its number?
+- **`Robot is at ... m away` warning:** the robot is not on the start point, or the three numbers in the config are wrong. Re-run `--calibrate`.
+- **Printed map shows the robot in the wrong cell, or the robot "drives into walls":** check the rotation first (a sign or 90 degree error is the usual cause), then the origin.
+- **Heading is off by a fixed angle:** the rigid body was created facing a different direction from the robot's front. Recreate it in Motive with the robot facing the Optitrack `+x` axis, or ask the TAs.
+- `--maze 0/1` from an older version of this README no longer exists; use `--run test1|test2|full`.
+
+---
+
 ## What is in this repository
 
 ```
 ca2.sh, gz_ca2.sh              copy next to src/ in your workspace
 src/rb2301_ca2/                copy into your workspace's src/
   rb2301_ca2/path_planning.py  <-- YOUR SOLUTION GOES HERE
-  rb2301_ca2/ca2_sim_map.npy   occupancy grid of the maze
+  rb2301_ca2/ca2_sim_map.npy   occupancy grid of the simulation maze
+  rb2301_ca2/ca2_irl_map.npy, ca2_irl_layout.json   real maze: grid, and start/goal points of the 3 runs (fixed)
+  rb2301_ca2/optitrack_variables.config   real maze placement in the Optitrack frame (the only file to edit)
 src/rb2301_gz/                 copy into your workspace's src/ (Gazebo world, robot model, launch file; do not edit)
+tools/irl_calibrate.py         real robot only: solves origin/rotation for the config from a few Optitrack readings (no ROS)
 ```
