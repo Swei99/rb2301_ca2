@@ -190,7 +190,7 @@ number = 3            ; your Bingda robot: 3 -> /vrpn_mocap/bingda_003/pose  (or
 
 Don't work these out by hand:
 
-1. On the robot, start Optitrack (below), then run `./ca2.sh --run test1 --calibrate`. It prints the raw Optitrack pose and the maze-frame pose twice a second and **never sends a velocity command**, so you can push the robot around by hand.
+1. On the robot, start `base_control` and `vrpn` (step 3), then run `source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1 --calibrate` from your workspace folder. It prints the raw Optitrack pose and the maze-frame pose twice a second and **never sends a velocity command**, so you can push the robot around by hand.
 2. Put the robot (or any rigid body Optitrack tracks) on two or more known maze points, far apart (for example the start point of `test1` and a point near the opposite corner of the maze), and note the Optitrack `(x, y)` shown at each.
 3. On any computer (no ROS needed):
    ```bash
@@ -203,26 +203,33 @@ Motive must stream with **Z-up** so that `x, y` are the floor plane (it is, for 
 
 ### 3. Run it on the robot
 
-The robot runs Ubuntu 20.04 with ROS 2 **Foxy** (Python 3.8). Your laptop only has to copy files to it:
+The robot runs Ubuntu 20.04 with ROS 2 **Foxy** (Python 3.8). You write and edit on your laptop, then copy the package to the robot. Only `src/rb2301_ca2` goes to the robot, so on the robot you start the node with `ros2 run`, **not** `ca2.sh`.
 
-```bash
-# on your laptop, from this repository (use your own folder name; --delete only touches that one package folder)
-ssh bingda@192.168.1.20x "mkdir -p ~/Downloads/rb2301_ca2_<YourName>/src"
-rsync -auvx --delete src/rb2301_ca2 bingda@192.168.1.20x:~/Downloads/rb2301_ca2_<YourName>/src
+1. Connect your laptop to the lab network (Wi-Fi name and password are in the lab handout / slides).
+2. SSH to the robot and create your own workspace (replace `x` with your robot's number, e.g. `x=2` for BINGDA-002; the robot password is in the slides; use your own name so packages don't clash):
+   ```bash
+   ssh bingda@192.168.1.20x
+   mkdir -p ~/Downloads/rb2301_ca2_<YourName>/src
+   ```
+3. From your laptop's **own** terminal (not the ssh one), rsync the package to the robot. Re-run this every time you edit `path_planning.py` or the config:
+   ```bash
+   rsync -auvx --delete ~/Documents/rb2301_ca2/src/rb2301_ca2 bingda@192.168.1.20x:~/Downloads/rb2301_ca2_<YourName>/src
+   ```
+   (Use the path of your own `src/rb2301_ca2`. `--delete` only affects that one package folder on the robot.)
+4. Build on the robot (in the ssh terminal):
+   ```bash
+   cd ~/Downloads/rb2301_ca2_<YourName>
+   colcon build --symlink-install
+   ```
+5. Run each of these in a **separate** ssh terminal on the robot:
+   ```bash
+   ros2 launch base_control_ros2 base_control.launch.py      # alias: basecontrol -- reads /cmd_vel and drives the wheels
+   vrpn                                                      # alias for: ros2 launch vrpn_mocap client.launch.yaml server:=192.168.1.199 port:=3883
+   cd ~/Downloads/rb2301_ca2_<YourName> && source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1
+   ```
+   Use `--run test2` or `--run full` for the other runs, and add `--robot N` if your robot is not number 3 (or set it in the config). Put the robot on the run's start point first.
 
-# on the robot (ssh in), once and after every rsync that adds/removes files
-cd ~/Downloads/rb2301_ca2_<YourName> && colcon build --symlink-install
-```
-
-(`x` is your robot's number. Re-run the `rsync` after editing `path_planning.py` or the config on your laptop.) Then, in **separate terminals on the robot**:
-
-```bash
-ros2 launch base_control_ros2 base_control.launch.py     # alias: basecontrol   -- reads /cmd_vel, drives the wheels
-ros2 launch vrpn_mocap client.launch.yaml server:=192.168.1.199 port:=3883   # alias: vrpn   -- publishes Optitrack poses
-cd ~/Downloads/rb2301_ca2_<YourName> && ./ca2.sh --run test1       # or test2 / full; add --robot N if it isn't robot 3
-```
-
-The `base_control_ros2` / `vrpn` / WiFi details are in the lab handout. Check that `ros2 topic list` shows `/vrpn_mocap/bingda_00x/pose` before starting. Keep a hand near the robot and `Ctrl+C` the `ca2.sh` terminal if it misbehaves.
+Check that `ros2 topic list` shows `/vrpn_mocap/bingda_00x/pose` before starting. Keep a hand near the robot and press `Ctrl+C` in the `path_planning` terminal if it misbehaves.
 
 ### Troubleshooting (real robot)
 
