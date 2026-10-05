@@ -172,34 +172,21 @@ A fixed 3.2 m x 3.2 m maze, built at the **same 0.2 m grid** as the simulation (
 
 Place the robot on its start point before launching. (The first pose is checked against the run's start and you get a warning if it is more than 0.4 m away.) The robot's speed is capped at 0.3 m/s.
 
-### 1. One-time setup per maze placement: `optitrack_variables.config`
+### 1. The maze mapping (set by the TAs: do not edit)
 
-This is the **only** thing to edit when the maze is moved. It tells the code where the maze sits in Optitrack's frame (`src/rb2301_ca2/rb2301_ca2/optitrack_variables.config`):
+The TAs calibrate Optitrack once and ship the result inside the package, in `src/rb2301_ca2/rb2301_ca2/optitrack_variables.config`. It tells the code where the maze sits in Optitrack's frame (three numbers: `origin_x`, `origin_y`, `rotation_deg`), so that every pose is converted to the maze frame before your code sees it. **Use the config you are given as it is.** If positions or headings look wrong, tell a TA instead of changing the numbers.
 
-```ini
-[frame]
-origin_x = 0.0        ; Optitrack (x, y) in metres of the maze's (0, 0) corner
-origin_y = 0.0
-rotation_deg = 0.0    ; angle of the maze's +x axis in Optitrack's frame, counter-clockwise positive
+The only other thing in that file is your robot's number, which you set on the command line with `--robot x` (see step 3 below).
 
-[robot]
-number = 3            ; your Bingda robot: 3 -> /vrpn_mocap/bingda_003/pose  (or pass --robot N)
+### 2. Check where the robot thinks it is (optional, before driving)
+
+Run your node with `--calibrate`. It prints the raw Optitrack pose and the maze-frame pose twice a second and **never sends a velocity command**, so you can push the robot around by hand:
+
+```bash
+source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1 --robot x --calibrate
 ```
 
-### 2. Calibrate
-
-Don't work these out by hand:
-
-1. On the robot, start `base_control` and `vrpn` (step 3), then run `source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1 --calibrate` from your workspace folder. It prints the raw Optitrack pose and the maze-frame pose twice a second and **never sends a velocity command**, so you can push the robot around by hand.
-2. Put the robot (or any rigid body Optitrack tracks) on two or more known maze points, far apart (for example the start point of `test1` and a point near the opposite corner of the maze), and note the Optitrack `(x, y)` shown at each.
-3. On any computer (no ROS needed):
-   ```bash
-   python3 tools/irl_calibrate.py --pair 0.5 0.5 <opti_x> <opti_y> --pair 2.9 2.9 <opti_x> <opti_y>
-   ```
-   Each `--pair` is `maze_x maze_y optitrack_x optitrack_y`. It prints the three numbers to paste into the config and a fit residual (it should be a centimetre or two; it warns above 5 cm).
-4. Copy the config to the robot (step 3 below), run `--calibrate` again and check the **maze** pose matches where you really put the robot. Also turn the robot to face the maze's `+x` direction: the maze heading should read about `0`.
-
-Motive must stream with **Z-up** so that `x, y` are the floor plane (it is, for the existing set-up).
+Put the robot on the run's start point: the **maze** pose should match it (within a few cm) and the printed cell should be right. Turn the robot to face the maze's `+x` direction: the maze heading should read about `0`. If not, tell a TA before driving.
 
 ### 3. Run it on the robot
 
@@ -211,7 +198,7 @@ The robot runs Ubuntu 20.04 with ROS 2 **Foxy** (Python 3.8). You write and edit
    ssh bingda@192.168.1.20x
    mkdir -p ~/Downloads/rb2301_ca2_<YourName>/src
    ```
-3. From your laptop's **own** terminal (not the ssh one), rsync the package to the robot. Re-run this every time you edit `path_planning.py` or the config:
+3. From your laptop's **own** terminal (not the ssh one), rsync the package to the robot. Re-run this every time you edit `path_planning.py`:
    ```bash
    rsync -auvx --delete ~/Documents/rb2301_ca2/src/rb2301_ca2 bingda@192.168.1.20x:~/Downloads/rb2301_ca2_<YourName>/src
    ```
@@ -225,18 +212,27 @@ The robot runs Ubuntu 20.04 with ROS 2 **Foxy** (Python 3.8). You write and edit
    ```bash
    ros2 launch base_control_ros2 base_control.launch.py      # alias: basecontrol -- reads /cmd_vel and drives the wheels
    vrpn                                                      # alias for: ros2 launch vrpn_mocap client.launch.yaml server:=192.168.1.199 port:=3883
-   cd ~/Downloads/rb2301_ca2_<YourName> && source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1
+   cd ~/Downloads/rb2301_ca2_<YourName> && source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1 --robot x
    ```
-   Use `--run test2` or `--run full` for the other runs, and add `--robot N` if your robot is not number 3 (or set it in the config). Put the robot on the run's start point first.
+   Use `--run test2` or `--run full` for the other runs. Put the robot on the run's start point first.
 
 Check that `ros2 topic list` shows `/vrpn_mocap/bingda_00x/pose` before starting. Keep a hand near the robot and press `Ctrl+C` in the `path_planning` terminal if it misbehaves.
 
+### For TAs / instructors: calibrating the maze mapping
+
+Do this once per maze placement (and again if the maze, Optitrack or a rigid body is moved or rebuilt), then give students the package with the config filled in:
+
+1. Start `vrpn`, then run `ros2 run rb2301_ca2 path_planning --run test1 --robot x --calibrate` with the robot on two or more known maze points, far apart (for example the `test1` start (0.5, 0.5) and the `test2` start (2.7, 2.7)). Note the raw Optitrack `(x, y)` at each.
+2. On any computer (no ROS needed): `python3 tools/irl_calibrate.py --pair 0.5 0.5 <opti_x> <opti_y> --pair 2.7 2.7 <opti_x> <opti_y>`. Each `--pair` is `maze_x maze_y optitrack_x optitrack_y`. The fit residual should be a centimetre or two (it warns above 5 cm).
+3. Paste `origin_x`, `origin_y`, `rotation_deg` into `[frame]` in `optitrack_variables.config`. Rerun `--calibrate` and check the maze pose equals where you put the robot and the heading reads about `0` facing maze `+x`. A fixed heading offset means the rigid body was created facing another direction: recreate it in Motive.
+4. Motive must stream with **Z-up** so that `x, y` are the floor plane.
+
 ### Troubleshooting (real robot)
 
-- **No pose / nothing prints:** the node only starts working once it receives a pose. Is `vrpn` running, and does the rigid body in Motive have the same name as the topic (`bingda_00x`)? Is the robot's `ROS_DOMAIN_ID` set to its number?
-- **`Robot is at ... m away` warning:** the robot is not on the start point, or the three numbers in the config are wrong. Re-run `--calibrate`.
-- **Printed map shows the robot in the wrong cell, or the robot "drives into walls":** check the rotation first (a sign or 90 degree error is the usual cause), then the origin.
-- **Heading is off by a fixed angle:** the rigid body was created facing a different direction from the robot's front. Recreate it in Motive with the robot facing the Optitrack `+x` axis, or ask the TAs.
+- **No pose / nothing prints:** the node only starts working once it receives a pose. Is `vrpn` running, and does the rigid body in Motive have the same name as the topic (`bingda_00x`)? Is the robot's `ROS_DOMAIN_ID` set to its number, and is `--robot x` your number?
+- **`Robot is at ... m away` warning:** the robot is not on the start point, or the maze mapping in the config is out of date. Check the placement with `--calibrate`, then ask a TA.
+- **Printed map shows the robot in the wrong cell, or the robot "drives into walls":** this is a mapping problem, so ask a TA (do not edit the config yourself).
+- **Heading is off by a fixed angle:** the rigid body was created facing a different direction from the robot's front. Ask a TA.
 - `--maze 0/1` from an older version of this README no longer exists; use `--run test1|test2|full`.
 
 ---
@@ -249,7 +245,7 @@ src/rb2301_ca2/                copy into your workspace's src/
   rb2301_ca2/path_planning.py  <-- YOUR SOLUTION GOES HERE
   rb2301_ca2/ca2_sim_map.npy   occupancy grid of the simulation maze
   rb2301_ca2/ca2_irl_map.npy, ca2_irl_layout.json   real maze: grid, and start/goal points of the 3 runs (fixed)
-  rb2301_ca2/optitrack_variables.config   real maze placement in the Optitrack frame (the only file to edit)
+  rb2301_ca2/optitrack_variables.config   real maze placement in the Optitrack frame (set by the TAs; do not edit)
 src/rb2301_gz/                 copy into your workspace's src/ (Gazebo world, robot model, launch file; do not edit)
-tools/irl_calibrate.py         real robot only: solves origin/rotation for the config from a few Optitrack readings (no ROS)
+tools/irl_calibrate.py         TA use: solves origin/rotation for the config from a few Optitrack readings (no ROS)
 ```
