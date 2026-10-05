@@ -69,7 +69,7 @@ As soon as you assign `self.path = [(i1, j1), (i2, j2), ...]` (list of grid cell
 
 - The robot is omnidirectional, so `move_2D` accepts a sideways speed `y` as well.
 - **Bonus:** reach the goals using only forward/backward motion and turning (no sideways `y` speed), like a normal wheeled car.
-- Speed limits (enforced inside `move_2D`): 1.4 m/s in the simulation, **0.3 m/s on the real robot**. Do not change them.
+- Speed limits (enforced inside `move_2D`): 1.4 m/s in the simulation, **0.4 m/s on the real robot**. Do not change them.
 
 ---
 
@@ -91,6 +91,17 @@ colcon build --symlink-install
 ```
 
 Edits to `path_planning.py` take effect without rebuilding (`--symlink-install`); rebuild only if you add or remove files.
+
+### Already have the simulation version? Moving your solution over
+
+Only `path_planning.py` differs in a way that matters to you: it now also supports the real robot (pose from Optitrack, the real maze and its goals, `--run`, `--calibrate`). The parts you wrote do not change: your variables in `WaypointNode.__init__()`, your code between the two `###### INSERT CODE HERE ######` markers in `timer_callback()`, and any helper functions you added. The simulation behaves exactly as before.
+
+1. Keep a copy of your file: `cp src/rb2301_ca2/rb2301_ca2/path_planning.py ~/path_planning_mine.py`
+2. Replace the **other** files with the new ones, as in the steps above: `src/rb2301_ca2` (everything except `path_planning.py`: the maps, `ca2_irl_*`, `optitrack_variables.config`, `package.xml`, ...), `src/rb2301_gz`, and the two scripts.
+3. Put your solution into the new `path_planning.py`: paste your `__init__` variables, your code between the markers, and your helper functions. To see exactly what you added, compare your copy with the new file, e.g. `diff -u ~/path_planning_mine.py src/rb2301_ca2/rb2301_ca2/path_planning.py` or VS Code's *Select for Compare*.
+4. Rebuild (`colcon build --symlink-install`) and rerun the simulation to check it still works.
+
+**With git:** commit your work first, then `git pull` (or `git fetch` and `git merge origin/irl-final-maze`). Git keeps your edits and applies the new ones; if it reports a conflict in `path_planning.py`, open the file, find the `<<<<<<<` / `>>>>>>>` blocks, keep your lines and the new lines, then `git add` and `git commit`. To take everything except your solution, `git checkout origin/irl-final-maze -- src/rb2301_gz src/rb2301_ca2/rb2301_ca2/optitrack_variables.config src/rb2301_ca2/rb2301_ca2/ca2_irl_map.npy src/rb2301_ca2/rb2301_ca2/ca2_irl_layout.json` and merge `path_planning.py` by hand.
 
 ---
 
@@ -119,24 +130,28 @@ A fixed 3.2 m x 3.2 m maze on the **same 0.2 m grid** as the simulation (`ca2_ir
 | `test2` | (2.7, 2.7) | (0.5, 1.1) -> (1.7, 2.3) -> (0.5, 2.9) -> (1.1, 2.9) |
 | `full`  | (0.5, 2.1) | (1.1, 0.5) -> (2.3, 2.9) -> (2.9, 0.5) -> (0.5, 1.7) |
 
-Put the robot on its run's start point before launching (a warning is printed if it is more than 0.4 m away). Your code needs no changes: the Optitrack pose is converted into the maze's own frame before you see it, so `self.origin` is `(0, 0)`, `self.resolution` is `0.2`, and `world_to_grid()` / `grid_to_world()` work as in the simulation.
+Place the robot on its run's start point before launching (a warning is printed if it is more than 0.4 m away). Your code needs no changes: the Optitrack pose is converted into the maze's own frame before you see it, so `self.origin` is `(0, 0)`, `self.resolution` is `0.2`, and `world_to_grid()` / `grid_to_world()` work as in the simulation.
 
-**The TAs set up the Optitrack mapping once and ship it in the package (`optitrack_variables.config`). Do not edit it.** Your robot's number is taken from the robot's `ROS_DOMAIN_ID`, so you never type it. One rule for you: **a robot's rigid body must be created in Motive with the robot facing +y** (up the left side of the printed map, from (0.5, 0.5) towards (0.5, 2.1)); the code then reports heading `+90` when the robot faces `+y` and `0` when it faces `+x`. If you ever re-create or reset a rigid body, face the robot +y first.
+`optitrack_variables.config` holds the calibration that maps the real maze in Optitrack onto the maze in your code (the grid / numpy array). It is already filled in: do not edit it.
+
+**Robot number.** Robot `NN` (two digits, e.g. `07`) has the address `bingda@192.168.1.2NN` and the Optitrack rigid body / ROS topic `bingda_0NN`. `ROS_DOMAIN_ID` is already set to the number on every robot, and the node reads its robot from it, so there is nothing to pass or configure. The `vrpn` client publishes every rigid body; your node subscribes to `/vrpn_mocap/bingda_0NN/pose` of its own robot.
+
+**Rigid body orientation.** A robot's rigid body must be created in Motive with the robot **facing +y** (up the left side of the printed map, from (0.5, 0.5) towards (0.5, 2.1)). The code then reports heading `+90` facing `+y` and `0` facing `+x`. If you reset a rigid body, face the robot +y first.
 
 ### Step by step
 
-The robot runs Ubuntu 20.04 and ROS 2 **Foxy** (Python 3.8); you edit on your laptop and copy the package over. Only `src/rb2301_ca2` goes to the robot, so you start the node with `ros2 run`, **not** `ca2.sh`. Robot number `NN` is two digits and its address is `192.168.1.2NN` (robot 7 -> `192.168.1.207`, robot 12 -> `192.168.1.212`). Use your own name in the folder so packages don't clash.
+The robot runs Ubuntu 20.04 and ROS 2 **Foxy** (Python 3.8); you edit on your laptop and copy the package over. Only `src/rb2301_ca2` goes to the robot, so there you start the node with `ros2 run`, **not** `ca2.sh`. Use your group number in the workspace name so groups don't overwrite each other.
 
-**1. Create your workspace on the robot** (ssh in as usual):
+**1. Create your group's workspace on the robot** (ssh in as usual):
 
 ```bash
-mkdir -p ~/Downloads/rb2301_ca2_<YourName>/src
+mkdir -p ~/Downloads/rb2301_ca2_<group>/src
 ```
 
 **2. Copy your package** from your **laptop's own terminal** (not the ssh one). Repeat after every edit of `path_planning.py`:
 
 ```bash
-rsync -auvx --delete ~/Documents/rb2301/src/rb2301_ca2 bingda@192.168.1.2NN:~/Downloads/rb2301_ca2_<YourName>/src
+rsync -auvx --delete ~/Documents/rb2301/src/rb2301_ca2 bingda@192.168.1.2NN:~/Downloads/rb2301_ca2_<group>/src
 ```
 
 (Use the path to your own `src/rb2301_ca2`. `--delete` only touches that one folder on the robot.)
@@ -144,58 +159,55 @@ rsync -auvx --delete ~/Documents/rb2301/src/rb2301_ca2 bingda@192.168.1.2NN:~/Do
 **3. Build on the robot** (once, and again only if you add or remove files):
 
 ```bash
-cd ~/Downloads/rb2301_ca2_<YourName>
-colcon build --symlink-install        # alias: colb
+cd ~/Downloads/rb2301_ca2_<group>
+colb                                  # alias for: colcon build --symlink-install
 ```
 
 **4. Run, each in its own ssh terminal on the robot:**
 
 ```bash
 basecontrol                           # terminal 1: reads /cmd_vel and drives the wheels
-vrpn                                  # terminal 2: Optitrack pose client; check: ros2 topic list shows /vrpn_mocap/bingda_0NN/pose
-cd ~/Downloads/rb2301_ca2_<YourName> && source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1     # terminal 3
+vrpn                                  # terminal 2: Optitrack pose client; ros2 topic list should show /vrpn_mocap/bingda_0NN/pose
+cd ~/Downloads/rb2301_ca2_<group> && source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1     # terminal 3
 ```
 
 Use `--run test2` or `--run full` for the other runs. The node prints the robot it found (`robot=bingda_0NN`), the map with the robot `S`, goals `W`/`G` and your route `*`, and a warning if the robot is not on the start point.
 
-> **Safety.** The unchanged starter code drives straight ahead at 0.3 m/s as soon as it gets a pose. Start the node only when the way ahead is clear, keep a hand on the robot, and press `Ctrl+C` in the `path_planning` terminal (or in the `basecontrol` terminal) to stop it.
+> **Running safely.** Stay out of the Optitrack area while the robot runs: people and objects in it can disturb the tracking. Stop with `Ctrl+C` in the `path_planning` terminal (`Ctrl+C` in the `basecontrol` terminal also stops the wheels). The unchanged starter code drives straight ahead until you replace it, so start with a clear lane in front of the robot.
 
-**Optional check before driving:** add `--calibrate`. It prints the raw Optitrack pose and your maze-frame pose twice a second and **never sends a velocity command**, so you can carry the robot around by hand. On the start point the maze pose should match it (within a few cm); facing `+x` the heading reads about `0`. If not, tell a TA.
+**Check before driving (optional):** add `--calibrate`. It prints the raw Optitrack pose and your maze-frame pose twice a second and **never sends a velocity command**, so you can move the robot by hand. On the start point the maze pose should match it (within a few cm); facing `+x` the heading reads about `0`. If not, tell a TA.
 
 ### Aliases and shortcuts already on the robot
-
-The robots' `~/.bashrc` already defines:
 
 | Alias | Runs |
 |---|---|
 | `basecontrol` | `ros2 launch base_control_ros2 base_control.launch.py` (wheel driver) |
 | `vrpn` | `ros2 launch vrpn_mocap client.launch.yaml server:=192.168.1.199 port:=3883` (Optitrack poses) |
 | `colb` | `colcon build --symlink-install` |
-| `keyboard` | `ros2 run teleop_keyboard keyboard` (drive by hand, to move the robot onto its start point) |
+| `keyboard` | `ros2 run teleop_keyboard keyboard` (drive by hand, e.g. onto the start point) |
 | `rplidar` | `ros2 launch rplidar_ros rplidar.launch.py` (lidar, not needed here) |
-| `talker`, `listener` | ROS 2 demo nodes (to test the network) |
+| `talker`, `listener` | ROS 2 demo nodes (test the network) |
 | `nanobash`, `sourcebash` | `sudo nano ~/.bashrc` to edit it, `source ~/.bashrc` to reload it |
-| `unsetpath` | clears `AMENT_PREFIX_PATH` / `CMAKE_PREFIX_PATH` (use only if a build picks up the wrong workspace) |
+| `unsetpath` | clears `AMENT_PREFIX_PATH` / `CMAKE_PREFIX_PATH` (if a build picks up the wrong workspace) |
 
-**Adding your own:** run `nanobash`, add a line at the **bottom** such as
+**Adding your own:** run `nanobash`, add a line at the **bottom**, save, then `sourcebash` (or open a new terminal):
 
 ```bash
-alias ca2='cd ~/Downloads/rb2301_ca2_<YourName> && source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1'
+alias ca2='cd ~/Downloads/rb2301_ca2_<group> && source install/setup.bash && ros2 run rb2301_ca2 path_planning --run test1'
 ```
 
-save, then `sourcebash` (or open a new terminal). Do **not** change the `source ...` lines or `export ROS_DOMAIN_ID=...` in that file (the domain ID is the robot's number and is how your robot is told apart from the others). The robot's `.bashrc` is shared by everyone using that robot, so give your alias a distinctive name and keep other people's lines untouched. A handy one for your **laptop's** `~/.bashrc`:
+Leave the `source ...` lines and `export ROS_DOMAIN_ID=...` alone. The file is shared by everyone using that robot, so give your alias a distinctive name and don't touch other lines. A handy one for your **laptop's** `~/.bashrc`:
 
 ```bash
-alias ca2sync='rsync -auvx --delete ~/Documents/rb2301/src/rb2301_ca2 bingda@192.168.1.2NN:~/Downloads/rb2301_ca2_<YourName>/src'
+alias ca2sync='rsync -auvx --delete ~/Documents/rb2301/src/rb2301_ca2 bingda@192.168.1.2NN:~/Downloads/rb2301_ca2_<group>/src'
 ```
 
 ### Troubleshooting (real robot)
 
-- **Nothing prints / the robot never moves:** the node waits for a pose. Is `vrpn` running and does `ros2 topic list` show `/vrpn_mocap/bingda_0NN/pose`? Is `basecontrol` running? Does the start-up line show your robot (`robot=bingda_0NN`)? If not, add `--robot NN`.
+- **Nothing prints / the robot never moves:** the node waits for a pose. Is `vrpn` running and does `ros2 topic list` show `/vrpn_mocap/bingda_0NN/pose`? Is `basecontrol` running?
 - **`Robot is at ... m away`:** the robot is not on the start point. If it is, ask a TA.
-- **Robot appears in the wrong cell / drives into walls / turns the wrong way:** ask a TA (the mapping or the rigid body needs checking). Do not edit the config yourself.
-- **Build errors or old behaviour:** rsync again, then `colb` on the robot.
-- **`--maze` error:** that flag was replaced; use `--run test1|test2|full`.
+- **Wrong cell on the map, or the robot turns the wrong way:** ask a TA; the maze mapping or the rigid body needs checking.
+- **Build errors, or your edit has no effect:** rsync again, then `colb` on the robot.
 
 ---
 
@@ -224,4 +236,4 @@ tools/irl_calibrate.py         TA use: solves the maze origin/rotation from a fe
 
 ### For TAs / instructors
 
-Calibrate once per maze placement (and after any move of the maze or Optitrack): put a robot on two or more known maze points far apart, read the raw pose with `--calibrate`, then `python3 tools/irl_calibrate.py --pair 0.5 0.5 <opti_x> <opti_y> --pair 2.7 2.7 <opti_x> <opti_y>` (the residual should be 1-2 cm; it warns above 5 cm) and paste `origin_x`, `origin_y`, `rotation_deg` into `[frame]` of `optitrack_variables.config`. Motive must stream **Z-up**. Rigid bodies are created facing maze `+y`, so the heading offset is `auto`; a robot whose rigid body was created differently gets an entry under `[heading_offsets]` (`<robot number> = <reported heading minus true maze heading>`; robots 7 and 12 are measured).
+Calibrate once per maze placement (and after any move of the maze or Optitrack): put a robot on two or more known maze points far apart, read the raw pose with `--calibrate`, then `python3 tools/irl_calibrate.py --pair 0.5 0.5 <opti_x> <opti_y> --pair 2.7 2.7 <opti_x> <opti_y>` (the residual should be 1-2 cm; it warns above 5 cm) and paste `origin_x`, `origin_y`, `rotation_deg` into `[frame]` of `optitrack_variables.config`. Motive must stream **Z-up**. Rigid bodies are created facing maze `+y`, so the heading offset is `auto`; a robot whose rigid body was created differently gets an entry under `[heading_offsets]` (`<robot number> = <reported heading minus true maze heading>`; robots 7 and 12 are measured). The real-robot speed cap is `max_translate_velocity = 0.4` in `load_irl_config()`.

@@ -28,7 +28,7 @@ np.set_printoptions(
 set_logger_level("waypoint", level=LoggingSeverity.DEBUG) # Configure to either LoggingSeverity.INFO or LoggingSeverity.DEBUG
 
 occupancy_grid_resolution = 0.2 # Sim grid resolution, in metres per cell (the real maze uses the same 0.2m cells, see ca2_irl_layout.json)
-max_translate_velocity = 1.4 # Overwritten in main() based on sim vs real-life; 0.3m/s cap for real life, please keep that in place
+max_translate_velocity = 1.4 # Overwritten in main() based on sim vs real-life; 0.4m/s cap for real life, please keep that in place
 
 _PACKAGE_DIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -131,7 +131,7 @@ def load_irl_config(run:str) -> dict:
         "frame": frame,
         "robot_number": parser.getint("robot", "number"),
         "heading_offsets": heading_offsets, # per-robot override of frame["heading_offset_deg"]
-        "max_translate_velocity": 0.3, # Please keep this in place; 0.3m/s is more than fast enough
+        "max_translate_velocity": 0.4, # Please keep this in place
     }
 
 
@@ -163,7 +163,7 @@ class WaypointNode(Node):
         self.goal_list = goal_list
         self.map_array = map_array
         self.origin = origin # World (x, y) coordinate of the grid's [0, 0] corner. Use with grid_to_world()/world_to_grid()
-        self.resolution = resolution # Metres per grid cell for this run (0.2 sim, 0.1 real -- real maze is half scale). Use with grid_to_world()/world_to_grid()
+        self.resolution = resolution # Metres per grid cell (0.2). Use with grid_to_world()/world_to_grid()
 
         self.frame = frame # Optitrack->maze frame (real robot only), see optitrack_to_maze()
         self.expected_start = expected_start # Where this run says the robot should be placed (maze frame), real robot only
@@ -194,7 +194,7 @@ class WaypointNode(Node):
         dist = math.hypot(self.pose[0] - self.expected_start[0], self.pose[1] - self.expected_start[1])
         msg = f"Robot is at maze ({self.pose[0]:.2f}, {self.pose[1]:.2f}); this run starts at {self.expected_start} -- {dist:.2f} m away"
         if dist > 0.4:
-            self.get_logger().warn(msg + ". Check where the robot is placed, and origin_x/origin_y/rotation_deg in optitrack_variables.config.")
+            self.get_logger().warn(msg + ". Check where the robot is placed; if it is on the start point, ask a TA.")
         else:
             self.get_logger().info(msg + " (ok)")
 
@@ -448,10 +448,7 @@ def main(args=None):
         '--calibrate', action='store_true',
         help="Real robot: only print Optitrack and maze-frame poses (twice a second) and never publish cmd_vel. Use it to set origin/rotation."
     )
-    arg_parser.add_argument('--maze', help=argparse.SUPPRESS)
     cli_args, ros_args = arg_parser.parse_known_args(args=args)
-    if cli_args.maze is not None:
-        arg_parser.error("--maze was replaced by --run test1|test2|full")
     run = cli_args.run or ("test1" if cli_args.calibrate else None)
     is_simulation = run is None # Remember: pass --run test1|test2|full to ca2.sh when testing on the real lab setup
 
