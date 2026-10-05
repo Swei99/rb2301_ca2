@@ -1,4 +1,4 @@
-# RB2301 CA2 – Robot Path Planning
+# RB2301 CA2 - Robot Path Planning
 
 Your robot must drive through a known maze and visit a list of goal points **in order**, without touching a wall. You will:
 
