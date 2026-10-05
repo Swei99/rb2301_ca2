@@ -218,6 +218,8 @@ The robot runs Ubuntu 20.04 with ROS 2 **Foxy** (Python 3.8). You write and edit
    ```
    Use `--run test2` or `--run full` for the other runs. Put the robot on the run's start point first.
 
+   **The unchanged starter code drives the robot straight ahead at 0.3 m/s as soon as it gets a pose.** Start the node only when the way ahead is clear, keep a hand on the robot, and press `Ctrl+C` in the `path_planning` terminal (or `Ctrl+C` in the `base_control` terminal) to stop it. Once your own code is in `timer_callback()`, the same speed cap of 0.3 m/s applies.
+
 Check that `ros2 topic list` shows `/vrpn_mocap/bingda_00x/pose` before starting. Keep a hand near the robot and press `Ctrl+C` in the `path_planning` terminal if it misbehaves.
 
 ### For TAs / instructors: calibrating the maze mapping
@@ -226,8 +228,8 @@ Do this once per maze placement (and again if the maze, Optitrack or a rigid bod
 
 1. Start `vrpn`, then run `ros2 run rb2301_ca2 path_planning --run test1 --calibrate` with the robot on two or more known maze points, far apart (for example the `test1` start (0.5, 0.5) and the `test2` start (2.7, 2.7)). Note the raw Optitrack `(x, y)` at each.
 2. On any computer (no ROS needed): `python3 tools/irl_calibrate.py --pair 0.5 0.5 <opti_x> <opti_y> --pair 2.7 2.7 <opti_x> <opti_y>`. Each `--pair` is `maze_x maze_y optitrack_x optitrack_y`. The fit residual should be a centimetre or two (it warns above 5 cm).
-3. Paste `origin_x`, `origin_y`, `rotation_deg` into `[frame]` in `optitrack_variables.config`. Rerun `--calibrate` and check the maze pose equals where you put the robot and the heading reads about `0` facing maze `+x`. A fixed heading offset means the rigid body was created facing another direction: recreate it in Motive.
-4. **Heading:** every rigid body is created with the robot facing maze **+y**, and the package then reports `heading = Motive heading + 90` (`heading_offset_deg = auto` in `optitrack_variables.config`). Check each robot with `python3 tools/robot_test/multi_robot_test.py heading N`: drive it forward a few cm and compare. A rigid body that was not created facing +y needs a per-robot entry under `[heading_offsets]` as `<robot number> = <degrees>` (use `--apply` to write it); robots 7 and 12 have measured values.
+3. Paste `origin_x`, `origin_y`, `rotation_deg` into `[frame]` in `optitrack_variables.config`. Rerun `--calibrate` and check the maze pose equals where you put the robot.
+4. **Heading:** every rigid body is created with the robot facing maze **+y** (the same direction for all robots), and the package then reports `heading = Motive heading + 90` (`heading_offset_deg = auto`). So facing maze `+x` reads `0` and facing `+y` reads `+90`. Check each robot by facing it along `+x` and reading `--calibrate`, or by driving it forward a few cm: the reported heading must match the direction it really moves. A rigid body that was not created facing +y is fixed either by re-creating it in Motive, or by a per-robot entry under `[heading_offsets]` in the config, `<robot number> = <degrees>`, where degrees = reported heading minus the true maze heading (robots 7 and 12 have measured entries).
 5. Motive must stream with **Z-up** so that `x, y` are the floor plane.
 
 ### Troubleshooting (real robot)
