@@ -86,14 +86,15 @@ def optitrack_to_maze(x:float, y:float, heading_deg:float, frame:dict) -> tuple:
     dx, dy = x - frame["origin_x"], y - frame["origin_y"]
     r = math.radians(frame["rotation_deg"])
     c, s = math.cos(r), math.sin(r)
-    return (c * dx + s * dy, -s * dx + c * dy, wrap_deg(heading_deg - frame["rotation_deg"]))
+    return (c * dx + s * dy, -s * dx + c * dy,
+            wrap_deg(heading_deg - frame["rotation_deg"] - frame.get("heading_offset_deg", 0.0))) # offset: the Motive rigid body's "forward" vs the robot's front
 
 def maze_to_optitrack(mx:float, my:float, heading_deg:float, frame:dict) -> tuple:
     '''Inverse of optitrack_to_maze (handy for working out where to place the robot).'''
     r = math.radians(frame["rotation_deg"])
     c, s = math.cos(r), math.sin(r)
     return (frame["origin_x"] + c * mx - s * my, frame["origin_y"] + s * mx + c * my,
-            wrap_deg(heading_deg + frame["rotation_deg"]))
+            wrap_deg(heading_deg + frame["rotation_deg"] + frame.get("heading_offset_deg", 0.0)))
 
 def load_irl_config(run:str) -> dict:
     '''Build the real-maze profile for run "test1", "test2" or "full".'''
@@ -109,7 +110,9 @@ def load_irl_config(run:str) -> dict:
         "origin_x": parser.getfloat("frame", "origin_x"),
         "origin_y": parser.getfloat("frame", "origin_y"),
         "rotation_deg": parser.getfloat("frame", "rotation_deg"),
+        "heading_offset_deg": parser.getfloat("frame", "heading_offset_deg", fallback=0.0),
     }
+    heading_offsets = {int(k): float(v) for k, v in parser.items("heading_offsets")} if parser.has_section("heading_offsets") else {}
     return {
         "map_file": "ca2_irl_map.npy",
         "origin": (0.0, 0.0), # pose is converted into the maze frame, so the grid corner is (0, 0)
@@ -118,6 +121,7 @@ def load_irl_config(run:str) -> dict:
         "start": tuple(layout["runs"][run]["start"]),
         "frame": frame,
         "robot_number": parser.getint("robot", "number"),
+        "heading_offsets": heading_offsets, # per-robot override of frame["heading_offset_deg"]
         "max_translate_velocity": 0.3, # Please keep this in place; 0.3m/s is more than fast enough
     }
 
@@ -459,8 +463,9 @@ def main(args=None):
             robot_number = int(domain)
         else:
             robot_number = config["robot_number"]
+        frame["heading_offset_deg"] = config["heading_offsets"].get(robot_number, frame["heading_offset_deg"])
         print(f"Running on the real maze, run={run}, robot=bingda_{robot_number:03d}, resolution={config['resolution']}")
-        print(f"  maze origin in Optitrack frame = ({frame['origin_x']}, {frame['origin_y']}), rotation = {frame['rotation_deg']} deg")
+        print(f"  maze origin in Optitrack frame = ({frame['origin_x']}, {frame['origin_y']}), rotation = {frame['rotation_deg']} deg, robot heading offset = {frame['heading_offset_deg']} deg")
         print(f"  start={expected_start}, goals={config['goal_list']}")
         if cli_args.calibrate:
             print("  CALIBRATE MODE: printing poses only, the robot will not be commanded")

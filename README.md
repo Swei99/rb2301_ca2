@@ -225,7 +225,8 @@ Do this once per maze placement (and again if the maze, Optitrack or a rigid bod
 1. Start `vrpn`, then run `ros2 run rb2301_ca2 path_planning --run test1 --calibrate` with the robot on two or more known maze points, far apart (for example the `test1` start (0.5, 0.5) and the `test2` start (2.7, 2.7)). Note the raw Optitrack `(x, y)` at each.
 2. On any computer (no ROS needed): `python3 tools/irl_calibrate.py --pair 0.5 0.5 <opti_x> <opti_y> --pair 2.7 2.7 <opti_x> <opti_y>`. Each `--pair` is `maze_x maze_y optitrack_x optitrack_y`. The fit residual should be a centimetre or two (it warns above 5 cm).
 3. Paste `origin_x`, `origin_y`, `rotation_deg` into `[frame]` in `optitrack_variables.config`. Rerun `--calibrate` and check the maze pose equals where you put the robot and the heading reads about `0` facing maze `+x`. A fixed heading offset means the rigid body was created facing another direction: recreate it in Motive.
-4. Motive must stream with **Z-up** so that `x, y` are the floor plane.
+4. **Heading offset (per robot):** each robot's Motive rigid body can have its "forward" pointing somewhere other than the robot's front. Measure it by driving the robot forward a few cm: offset = reported heading minus the direction it really moved. Put it in `optitrack_variables.config` under `[heading_offsets]` as `<robot number> = <degrees>` (robot 7 is already set). The package subtracts it, so students' `self.pose[2]` is always the true heading in the maze frame.
+5. Motive must stream with **Z-up** so that `x, y` are the floor plane.
 
 ### Troubleshooting (real robot)
 
