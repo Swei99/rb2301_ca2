@@ -243,7 +243,10 @@ class WaypointNode(Node):
         """Controller loop. Insert path planning and PID control logic here"""
         if self.pose is None:
             return # Does not run if no pose received from Odom or Optitrack
-        self.get_logger().debug(f"Pose: {self.pose}")
+        now = time.time()
+        if now - getattr(self, "_last_pose_log", 0.0) >= 1.0: # at most once a second, so it does not bury the map / warnings below
+            self._last_pose_log = now
+            self.get_logger().debug(f"Pose: {self.pose}")
 
         if self.calibrate:
             self._print_calibration()
@@ -426,7 +429,7 @@ def main(args=None):
     )
     arg_parser.add_argument(
         '--robot', type=int, default=None,
-        help="Number of your Bingda robot (3 -> /vrpn_mocap/bingda_003/pose). Default: [robot] number in optitrack_variables.config."
+        help="Number of your Bingda robot (3 -> /vrpn_mocap/bingda_003/pose). Default: your ROS_DOMAIN_ID (set to the robot number on the robots), else [robot] number in optitrack_variables.config."
     )
     arg_parser.add_argument(
         '--calibrate', action='store_true',
@@ -449,7 +452,13 @@ def main(args=None):
     else:
         config = load_irl_config(run)
         frame, expected_start = config["frame"], config["start"]
-        robot_number = cli_args.robot if cli_args.robot is not None else config["robot_number"]
+        domain = os.environ.get("ROS_DOMAIN_ID", "")
+        if cli_args.robot is not None:
+            robot_number = cli_args.robot
+        elif domain.isdigit() and 1 <= int(domain) <= 99: # on the Bingda robots ROS_DOMAIN_ID is the robot number
+            robot_number = int(domain)
+        else:
+            robot_number = config["robot_number"]
         print(f"Running on the real maze, run={run}, robot=bingda_{robot_number:03d}, resolution={config['resolution']}")
         print(f"  maze origin in Optitrack frame = ({frame['origin_x']}, {frame['origin_y']}), rotation = {frame['rotation_deg']} deg")
         print(f"  start={expected_start}, goals={config['goal_list']}")
