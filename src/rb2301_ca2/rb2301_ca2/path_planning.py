@@ -96,6 +96,12 @@ def maze_to_optitrack(mx:float, my:float, heading_deg:float, frame:dict) -> tupl
     return (frame["origin_x"] + c * mx - s * my, frame["origin_y"] + s * mx + c * my,
             wrap_deg(heading_deg + frame["rotation_deg"] + frame.get("heading_offset_deg", 0.0)))
 
+def robot_frame(config:dict, robot_number:int) -> dict:
+    '''The frame for one robot: the shared origin/rotation plus that robot's heading offset (per-robot value from the config if listed).'''
+    frame = dict(config["frame"])
+    frame["heading_offset_deg"] = config["heading_offsets"].get(robot_number, frame["heading_offset_deg"])
+    return frame
+
 def load_irl_config(run:str) -> dict:
     '''Build the real-maze profile for run "test1", "test2" or "full".'''
     if run not in IRL_RUNS:
@@ -110,8 +116,11 @@ def load_irl_config(run:str) -> dict:
         "origin_x": parser.getfloat("frame", "origin_x"),
         "origin_y": parser.getfloat("frame", "origin_y"),
         "rotation_deg": parser.getfloat("frame", "rotation_deg"),
-        "heading_offset_deg": parser.getfloat("frame", "heading_offset_deg", fallback=0.0),
     }
+    # Rigid bodies are created in Motive with the robot facing the maze's +y direction, so the rigid body's zero heading IS maze +y
+    # (maze heading 90 deg): heading_maze = reported + 90 = reported - rotation - offset  =>  offset = -(rotation + 90). "auto" means that.
+    raw_offset = parser.get("frame", "heading_offset_deg", fallback="auto").strip().lower()
+    frame["heading_offset_deg"] = wrap_deg(-(frame["rotation_deg"] + 90.0)) if raw_offset == "auto" else float(raw_offset)
     heading_offsets = {int(k): float(v) for k, v in parser.items("heading_offsets")} if parser.has_section("heading_offsets") else {}
     return {
         "map_file": "ca2_irl_map.npy",
@@ -463,7 +472,8 @@ def main(args=None):
             robot_number = int(domain)
         else:
             robot_number = config["robot_number"]
-        frame["heading_offset_deg"] = config["heading_offsets"].get(robot_number, frame["heading_offset_deg"])
+        frame = robot_frame(config, robot_number)
+        expected_start = config["start"]
         print(f"Running on the real maze, run={run}, robot=bingda_{robot_number:03d}, resolution={config['resolution']}")
         print(f"  maze origin in Optitrack frame = ({frame['origin_x']}, {frame['origin_y']}), rotation = {frame['rotation_deg']} deg, robot heading offset = {frame['heading_offset_deg']} deg")
         print(f"  start={expected_start}, goals={config['goal_list']}")
