@@ -195,6 +195,41 @@ If you changed nothing in `path_planning.py` yet, the starter code just drives t
 
 Stay out of the Optitrack area while the robot runs. People and objects in it can disturb the tracking. To stop the robot press `Ctrl+C` in the `path_planning` terminal. `Ctrl+C` in the `basecontrol` terminal stops the wheels too.
 
+### Automate setup and testing from your laptop
+
+Run `robot-test.sh` from this repository. It creates the group workspace, syncs
+`src/rb2301_ca2`, builds it, and launches base control, Optitrack, planner output,
+and interactive controls. The group defaults to `11`; change it for your group.
+
+```bash
+./robot-test.sh 07 --group 11 --run test1
+./robot-test.sh 07 --group 11 --run test2
+./robot-test.sh 07 --group 11 --calibrate
+./robot-test.sh 07 --group 11 --setup-only   # copy and build without launching
+```
+
+Robot `07` connects to `bingda@192.168.1.207`. Sources are found relative to the
+script, so your current directory does not matter. SSH keys work directly; if
+`sshpass` is installed, the script uses password `bingda`, or the value of
+`ROBOT_PASSWORD` if set. New host keys are accepted; changed keys are rejected.
+
+On a Linux desktop it opens three GNOME terminals and uses the current terminal
+for controls. On macOS or headless Linux, install `tmux`; the script opens four
+tmux windows. Use `Ctrl+B`, then `n` or `p`, to switch windows. Select explicitly
+with `--terminal gnome` or `--terminal tmux`.
+
+Press **Enter** in the control terminal to start. The planner waits for a live
+Optitrack pose first. **s** pauses and sends zero velocity commands, **r** resumes,
+and **q** or **Ctrl+C** stops all processes started by this session. These keys
+do not require Enter. Closing a service terminal or detaching tmux also stops
+the session. In calibration mode the planner only prints poses.
+
+The script runs the current `path_planning.py`; the upstream starter drives
+straight ahead in drive mode. It does not select or modify your
+`path_planning_*.py` variants. Use `--no-build` after edits if the workspace has
+already been built with symlink installation; rebuild after adding/removing files.
+Logs are saved on the robot under the group workspace's `.robot-test/` directory.
+
 ### Checking the pose before you drive
 
 Add `--calibrate` to the command in terminal 3. The node then prints the raw Optitrack pose and the maze pose twice a second and never sends a drive command, so you can carry the robot around by hand:
