@@ -135,6 +135,76 @@ def load_irl_config(run:str) -> dict:
     }
 
 
+# --- Path planning + PID helpers ---------------------------------------------
+WALL_PENALTY = 3.0 # Extra A* cost to enter a free cell touching a wall
+NEAR_WALL_PENALTY = 1.0 # Extra A* cost to enter a free cell two cells away from a wall
+NEIGHBOURS = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)) # 8-connected moves
+
+
+def astar(grid_array:np.array, start:tuple, goal:tuple) -> list:
+    '''A* on the occupancy grid. Returns the list of cells from start to goal, or None if there is no path.
+
+    Step cost is 1 for a straight move and sqrt(2) for a diagonal, plus a penalty for entering a cell near a wall,
+    so the path keeps to the middle of corridors wherever there is room. Diagonal moves that would cut the corner
+    of a wall are not allowed.
+    '''
+    is_free = lambda c: 0 <= c[0] < grid_array.shape[0] and 0 <= c[1] < grid_array.shape[1] and grid_array[c] <= 50
+    if not (is_free(start) and is_free(goal)):
+        return None
+
+    walls = np.pad(grid_array > 50, 2, constant_values=True) # Outside the grid counts as wall
+    rows, cols = grid_array.shape
+    near_wall = lambda r: np.any([walls[2+di:2+di+rows, 2+dj:2+dj+cols] for di in range(-r, r+1) for dj in range(-r, r+1)], axis=0)
+    penalty = np.where(near_wall(1), WALL_PENALTY, np.where(near_wall(2), NEAR_WALL_PENALTY, 0.0))
+
+    def heuristic(cell): # Octile distance: never overestimates the real cost, so the path found is the cheapest
+        di, dj = abs(cell[0]-goal[0]), abs(cell[1]-goal[1])
+        return max(di, dj) + (np.sqrt(2) - 1) * min(di, dj)
+
+    open_heap = [(heuristic(start), 0, start)] # (estimated total cost, tie-breaker, cell)
+    cost = {start: 0.0}
+    came_from = {start: None}
+    pushes = 0
+    while open_heap:
+        cell = heapq.heappop(open_heap)[2]
+        if cell == goal: # Walk back through came_from to get the path
+            path = []
+            while cell is not None:
+                path.append(cell)
+                cell = came_from[cell]
+            return path[::-1]
+
+        for di, dj in NEIGHBOURS:
+            nxt = (cell[0]+di, cell[1]+dj)
+            if not is_free(nxt) or (di and dj and not (is_free((cell[0]+di, cell[1])) and is_free((cell[0], cell[1]+dj)))):
+                continue
+            new_cost = cost[cell] + np.hypot(di, dj) + penalty[nxt]
+            if new_cost < cost.get(nxt, np.inf):
+                cost[nxt] = new_cost
+                came_from[nxt] = cell
+                pushes += 1
+                heapq.heappush(open_heap, (new_cost + heuristic(nxt), pushes, nxt))
+    return None
+
+
+class PID():
+    '''PID controller, stepped once per timer tick (dt seconds). The output is clipped to +/- out_limit, and the
+    integral to +/- integral_limit so it can't wind up'''
+    def __init__(self, kp:float, ki:float, kd:float, out_limit:float, integral_limit:float=np.inf, dt:float=0.05):
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self.out_limit, self.integral_limit, self.dt = out_limit, integral_limit, dt
+        self.reset()
+
+    def reset(self):
+        self.integral, self.prev_error = 0.0, None
+
+    def step(self, error:float) -> float:
+        self.integral = np.clip(self.integral + error * self.dt, -self.integral_limit, self.integral_limit)
+        derivative = 0.0 if self.prev_error is None else (error - self.prev_error) / self.dt
+        self.prev_error = error
+        return float(np.clip(self.kp*error + self.ki*self.integral + self.kd*derivative, -self.out_limit, self.out_limit))
+
+
 class WaypointNode(Node):
     '''Node to calculate path and move robot towards given goal_coordinates, using pose info from either gazebo odometer or optitrack'''
     def __init__(self, map_array:np.array, goal_list:list, is_simulation:bool=True, origin:tuple=(0.0, 0.0), resolution:float=occupancy_grid_resolution,
@@ -175,6 +245,30 @@ class WaypointNode(Node):
         self.pose = None
         self.path = [] # Set this to your planned route (a list of grid-index tuples, in travel order) once you've computed it -- it'll automatically show up in the terminal map print
         self._last_printed_path = None
+
+        # --- Path planning + PID state ---
+        self.state = "PLAN" # PLAN (A* to the next goal) -> DRIVE (follow the path) -> ... -> STOP
+        self.goal_idx = 0 # Index of the goal in goal_list being driven to
+        self.waypoints = [] # World (x, y) points of the current path. Set by set_waypoints()
+        self.current_waypoint_idx = 0 # Path segment the robot is currently on
+        self.goal_reached = False
+        self.speed = 0.0 # Forward speed sent last tick, so speed changes can be ramped
+        self.stop_ticks = 0 # Ticks spent stopped at the end, before shutting down
+
+        # Distances and speeds scale with the cell size (0.2m in both the sim and the real maze)
+        self.GOAL_TOL = 0.5 * resolution # Goal counts as reached within this distance (0.1m)
+        self.LOOKAHEAD = 1.0 * resolution # Aim this far ahead along the path, so corners are rounded smoothly
+        self.MAX_SPEED = min(2.0 * resolution, max_translate_velocity) # 0.4 m/s
+        self.MIN_SPEED = min(1.0 * resolution, max_translate_velocity) # The sim robot doesn't move at all below ~0.1 m/s
+        self.MAX_ACCEL = 5.0 * resolution # m/s^2: most the forward speed may change by per second
+        self.MAX_TURN = 2.0 * max_translate_velocity # move_2D's own turn limit
+        self.MIN_TURN = 1.5 if is_simulation else 0.3 # rad/s. The sim robot doesn't turn at all below ~0.8 rad/s
+        self.BODY_OFFSET = 0.074 if is_simulation else 0.0 # The sim pose is the rear axle; steer the body's centre, 0.074m ahead
+
+        # PID controllers
+        self.distance_pid = PID(1.0, 0.0, 0.0, out_limit=self.MAX_SPEED) # Path length left (m) -> forward speed (m/s)
+        self.heading_pid = PID(3.0, 0.0, 0.2, out_limit=self.MAX_TURN) # Heading error (rad) -> turn rate (rad/s)
+        self.cross_track_pid = PID(1.0, 2.0, 0.0, out_limit=0.75 * resolution, integral_limit=0.05) # Distance off the path (m) -> how far to shift the aim point back towards it (m)
 
     def _print_calibration(self):
         '''--calibrate: twice a second, print the raw Optitrack pose next to the maze-frame pose and grid cell.'''
@@ -252,6 +346,40 @@ class WaypointNode(Node):
         self.waypoints = waypoints
         self.current_waypoint_idx = 0
 
+    def follow_path(self, position:np.array) -> tuple:
+        '''Returns (carrot, remaining, cross_track, left) for the current path:
+            carrot      : the point LOOKAHEAD further along the path than the closest point to the robot, which the robot aims at
+            remaining   : path length left to the goal
+            cross_track : distance from the path, positive when the robot is left of it
+            left        : unit vector pointing left of the path
+        Only the next few segments are searched for the closest point, so where the path doubles back the robot
+        can't skip ahead onto a later part of it.'''
+        points = np.array(self.waypoints, dtype=float)
+        segments = np.diff(points, axis=0)
+        lengths = np.hypot(segments[:, 0], segments[:, 1])
+        along = np.concatenate(([0.0], np.cumsum(lengths))) # Path distance from the start to each waypoint
+
+        best_distance, best_t = np.inf, 0.0
+        for k in range(self.current_waypoint_idx, min(self.current_waypoint_idx + 4, len(segments))):
+            t = np.clip(np.dot(position - points[k], segments[k]) / max(lengths[k]**2, 1e-9), 0.0, 1.0)
+            distance = np.hypot(*(position - points[k] - t * segments[k]))
+            if distance < best_distance:
+                best_distance, best_t, self.current_waypoint_idx = distance, t, k
+        k = self.current_waypoint_idx
+        s = along[k] + best_t * lengths[k] # Path distance from the start to the closest point
+
+        left = np.array((-segments[k, 1], segments[k, 0])) / max(lengths[k], 1e-9)
+        cross_track = float(np.dot(position - points[k] - best_t * segments[k], left))
+        carrot = np.array((np.interp(s + self.LOOKAHEAD, along, points[:, 0]), np.interp(s + self.LOOKAHEAD, along, points[:, 1])))
+        return carrot, along[-1] - s, cross_track, left
+
+    def drive(self, speed:float, turn:float):
+        '''Ramp the forward speed towards speed by at most MAX_ACCEL per second, then send it with the turn rate.
+        Like a car: forward speed and turning only, never sideways'''
+        step = self.MAX_ACCEL * 0.05 # Timer period is 0.05s
+        self.speed = float(np.clip(speed, self.speed - step, self.speed + step))
+        self.move_2D(self.speed, 0.0, turn)
+
     def timer_callback(self):
         """Controller loop. Insert path planning and PID control logic here"""
         if self.pose is None:
@@ -272,7 +400,57 @@ class WaypointNode(Node):
             self._last_printed_path = list(self.path)
 
         ###### INSERT CODE HERE ######
-        self.move_2D(0.5)
+        heading = np.deg2rad(self.pose[2])
+        position = self.pose[:2] + self.BODY_OFFSET * np.array((np.cos(heading), np.sin(heading))) # Middle of the robot's body
+
+        if self.state == "PLAN": # A* from the robot's current cell to the next goal. Planned from the live pose, so drift doesn't carry over
+            goal = self.goal_list[self.goal_idx]
+            cells = astar(self.map_array, world_to_grid(*position, self.origin, self.resolution), world_to_grid(*goal, self.origin, self.resolution))
+            if cells is None:
+                self.get_logger().error(f"No path to goal {self.goal_idx+1} at {goal}")
+                self.state = "STOP"
+            else:
+                self.path = self.path + cells # Keep every leg, so the terminal map shows the whole route
+                # Path to follow: the robot's position -> centre of each cell in between -> exactly on the goal
+                self.set_waypoints([tuple(position)] + [grid_to_world(i, j, self.origin, self.resolution) for i, j in cells[1:-1]] + [goal])
+                self.heading_pid.reset()
+                self.get_logger().info(f"Goal {self.goal_idx+1}/{len(self.goal_list)} at {goal}: {len(cells)} cells")
+                self.state = "DRIVE"
+
+        elif self.state == "DRIVE":
+            if np.hypot(*(position - self.waypoints[-1])) < self.GOAL_TOL: # Reached the goal
+                self.goal_reached = True
+                self.get_logger().info(f"Reached goal {self.goal_idx+1} at {self.goal_list[self.goal_idx]}, pose {self.pose}")
+                self.goal_idx += 1
+                self.state = "PLAN" if self.goal_idx < len(self.goal_list) else "STOP"
+            else:
+                carrot, remaining, cross_track, left = self.follow_path(position)
+                carrot = carrot + self.cross_track_pid.step(-cross_track) * left # Shift the aim point to pull the robot back onto the path
+                to_carrot = carrot - position
+                if np.hypot(*to_carrot) < 0.25 * self.resolution: # Right on top of the aim point (only happens at the goal)
+                    heading_error = 0.0
+                else:
+                    heading_error = (np.rad2deg(np.arctan2(to_carrot[1], to_carrot[0])) - self.pose[2] + 180.0) % 360.0 - 180.0 # Degrees, -180 to 180
+
+                # Turn: nothing inside a 3 deg deadband, otherwise the heading PID, but never weaker than MIN_TURN
+                if abs(heading_error) < 3.0:
+                    self.heading_pid.reset()
+                    turn = 0.0
+                else:
+                    turn = np.sign(heading_error) * np.clip(abs(self.heading_pid.step(np.deg2rad(heading_error))), self.MIN_TURN, self.MAX_TURN)
+
+                # Speed: set by the path length left; full speed within 15 deg of the aim point, slowing to a turn on the spot at 45 deg
+                aim = np.clip((45.0 - abs(heading_error)) / 30.0, 0.0, 1.0)
+                speed = np.clip(self.distance_pid.step(remaining), self.MIN_SPEED, self.MAX_SPEED)
+                self.drive(max(speed * aim, self.MIN_SPEED) if aim > 0 else 0.0, turn)
+
+        elif self.state == "STOP": # Ramp down to a standstill, hold it for a few ticks, then shut down
+            self.drive(0.0, 0.0)
+            if self.speed == 0.0:
+                self.stop_ticks += 1
+                if self.stop_ticks > 5:
+                    self.get_logger().info("Finished, shutting down")
+                    raise SystemExit
         ###### INSERT CODE HERE ######
 
 
